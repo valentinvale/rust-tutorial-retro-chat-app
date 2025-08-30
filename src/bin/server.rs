@@ -43,9 +43,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let tx = tx.clone();
         let rx = tx.subscribe();
 
-        // tokio::spawn(async move{
-        //     handle_connection()
-        // })
+        tokio::spawn(async move{
+            handle_connection(socket, tx, rx).await;
+        });
     }
 
     async fn handle_connection(
@@ -70,6 +70,49 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let join_json = serde_json::to_string(&join_msg).unwrap();
 
         tx.send(join_json).unwrap();
+
+        let mut line = String::new();
+        loop {
+            tokio::select! {
+                result = reader.read_line(&mut line) => {
+                    if result.unwrap() == 0 {
+                        break;
+                    }
+                    let msg = ChatMessage{
+                        username: username.clone(),
+                        content: line.trim().to_string(),
+                        timestamp: Local::now().format("%H:%M:%S").to_string(),
+                        message_type: MessageType::UserMessage,
+                    };
+
+                    let msg_json = serde_json::to_string(&msg).unwrap();
+
+                    tx.send(msg_json).unwrap();
+
+                    line.clear();
+                }
+
+                result = rx.recv() => {
+                    let msg = result.unwrap();
+                    writer.write_all(msg.as_bytes()).await.unwrap();
+                    writer.write_all(b"\n").await.unwrap();
+                }
+
+            }
+        }
+
+        let leave_msg = ChatMessage{
+            username: username.clone(),
+            content: "left the chat".to_string(),
+            timestamp: Local::now().format("%H:%M:%S").to_string(),
+            message_type: MessageType::SystemNotification,
+        };
+
+        let leave_json = serde_json::to_string(&leave_msg).unwrap();
+        tx.send(leave_json).unwrap();
+
+        println!("[{}] {} disconnected", Local::now().format("%d-%m-%Y %H:%M:%S"), username);
+
     }
 
 }
